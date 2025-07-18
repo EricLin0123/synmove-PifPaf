@@ -8,9 +8,8 @@ import cv2
 import numpy as np
 from openpifpaf import decoder, logger, network, show, visualizer, __version__
 from openpifpaf.predictor import Predictor
-from scipy.optimize import linear_sum_assignment
-import matplotlib.pyplot as plt
-
+from utils.visualize import annotate_image, draw_matches, bev # for all the plots
+from utils.matching import hungarian_centroid_match # for matching vehicles between left and right images
 
 LOG = logging.getLogger(__name__)
 BASELINE = 45 # cm
@@ -67,32 +66,8 @@ def cli():
 
     return args
 
-
-def out_name(arg, in_name, default_extension):
-    """Determine an output name from args, input name and extension.
-
-    arg can be:
-    - none: return none (e.g. show image but don't store it)
-    - True: activate this output and determine a default name
-    - string:
-        - not a directory: use this as the output file name
-        - is a directory: use directory name and input name to form an output
-    """
-    if arg is None:
-        return None
-
-    if arg is True:
-        return in_name + default_extension
-
-    if os.path.isdir(arg):
-        return os.path.join(
-            arg,
-            os.path.basename(in_name)
-        ) + default_extension
-
-    return arg
-
 def load_projection_matrices(calib_file):
+    '''Load the projection matrices from the calibration file.'''
     P_rect_02 = None
     P_rect_03 = None
     with open(calib_file, 'r') as f:
@@ -102,75 +77,6 @@ def load_projection_matrices(calib_file):
             elif line.startswith('P_rect_03'):
                 P_rect_03 = np.array([float(x) for x in line.split()[1:]]).reshape(3, 4)
     return P_rect_02, P_rect_03
-
-def annotate_image(image, pred):
-    """Annotate the image with keypoints, skeletons, and bounding boxes."""
-    for ann in pred:
-        # extract data
-        num_bones = len(ann.skeleton_m1)
-        keypoints = ann.data[:, :3]  # x, y, confidence
-        x, y, w, h = ann.bbox()
-        # Draw bounding box
-        cv2.rectangle(image, (int(x), int(y)), (int(x + w), int(y + h)), color=(0, 255, 0), thickness=2)
-        # Draw bones
-        for idx, (joint_a, joint_b) in enumerate(ann.skeleton_m1):
-            if keypoints[joint_a][2] > 0.0 and keypoints[joint_b][2] > 0.0:
-                pt1 = tuple(int(v) for v in keypoints[joint_a][:2])
-                pt2 = tuple(int(v) for v in keypoints[joint_b][:2])
-
-                # Map index to color (without normalization)
-                color_idx = int(255 * idx / max(num_bones - 1, 1))
-                color = cv2.applyColorMap(np.array([[color_idx]], dtype=np.uint8), cv2.COLORMAP_JET)[0, 0].tolist()
-
-                cv2.line(image, pt1, pt2, color=color, thickness=3)
-        # Draw keypoints
-        for x, y, conf in keypoints:
-            if conf > 0.0:
-                cv2.circle(image, (int(x), int(y)), 3, color=(255, 0, 0), thickness=-1)
-    return image
-
-def get_centroid(ann):
-    """Get the centroid from a annotation."""
-    x, y, w, h = ann.bbox()
-    return (x + w / 2, y + h / 2)
-
-def hungarian_centroid_match(pred_left, pred_right):
-    """
-    Match keypoints between left and right predictions using the Hungarian algorithm.
-    Note: The constraint threshold may need to be changed into a percentage of the image size rather than pixel for better generalization.
-    """
-    # get centroids of the bounding boxes
-    left_centroids = np.array([get_centroid(ann) for ann in pred_left])
-    right_centroids = np.array([get_centroid(ann) for ann in pred_right])
-    # if no centroids, return empty list
-    if len(left_centroids) == 0 or len(right_centroids) == 0:
-        return []
-    # Hungarian algorithm to find the best matches
-    cost_matrix = np.linalg.norm(left_centroids[:, np.newaxis] - right_centroids, axis=2)
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    # filter matches based on a threshold
-    matches = []
-    for i, j in zip(row_ind, col_ind):
-        x_threshold = np.abs(left_centroids[i][0] - right_centroids[j][0]) < 300
-        # y coordinate should follow the constrint of rectified stereo pair, thus stricter
-        y_threshold = np.abs(left_centroids[i][1] - right_centroids[j][1]) < 25
-        if x_threshold and y_threshold:
-            matches.append((pred_left[i], pred_right[j]))
-    return matches
-
-def draw_matches(combined_image, matches, shape_left, shape_right):
-    """Draw matches between left and right images."""
-    for ann_left, ann_right in matches:
-        centroid_left = get_centroid(ann_left)
-        centroid_right = get_centroid(ann_right)
-        # draw centroids
-        cv2.circle(combined_image, (int(centroid_left[0]), int(centroid_left[1])), 5, color=(0, 0, 255), thickness=5)
-        cv2.circle(combined_image, (int(centroid_right[0] + shape_left[1]), int(centroid_right[1])), 5, color=(0, 0, 255), thickness=5)
-        # draw line connecting the two annotations
-        cv2.line(combined_image,
-                 (int(centroid_left[0]), int(centroid_left[1])),
-                 (int(centroid_right[0] + shape_left[1]), int(centroid_right[1])),
-                 color=(0, 0, 255), thickness=5)
         
 def keypoints3d(ann_left, ann_right, focal_length:tuple, baseline:float, centriod_left:tuple):
     """Estimate depth from matched objects."""
@@ -195,39 +101,6 @@ def keypoints3d(ann_left, ann_right, focal_length:tuple, baseline:float, centrio
             points_3d.append(None)
     return points_3d
 
-def bev(points_3d_list, skeleton, save_path='bev.png', figsize=(8, 8), point_size=4):
-    """Generate a bird's eye view from 3D points."""
-    fig, ax = plt.subplots(figsize=figsize)
-    cmap = plt.colormaps['jet'].resampled(len(skeleton))
-
-    for points in points_3d_list:
-        # Draw skeleton
-        for idx, (i, j) in enumerate(skeleton):
-            if i < len(points) and j < len(points):
-                pi = points[i]
-                pj = points[j]
-                if pi is not None and pj is not None:
-                    xi, zi = pi[0], pi[2]
-                    xj, zj = pj[0], pj[2]
-                    ax.plot([xi, xj], [zi, zj], color=cmap(idx), linewidth=2)
-        # Draw keypoints
-        for pt in points:
-            if pt is not None:
-                x, _, z = pt
-                ax.scatter(x, z, s=point_size, c='black', zorder=3)
-
-    ax.set_xlabel("X (cm)")
-    ax.set_ylabel("Z (cm)")
-    ax.set_title("Bird's Eye View")
-    ax.grid(True)
-    ax.set_xlim(-900, 900)
-    ax.set_ylim(0, 1800)
-
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, bbox_inches='tight')
-    plt.close()
-    print(f"Saved BEV image to {save_path}")
-
 def main():
     # parse command line arguments
     args = cli()
@@ -237,7 +110,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     # load projection matrices
-    P_left, P_right = load_projection_matrices(calib_file_path)
+    P_left, _ = load_projection_matrices(calib_file_path)
     fx = P_left[0, 0]  # focal length
     fy = P_left[1, 1]  # focal length
     c_left = [P_left[0, 2], P_left[1, 2]]  # principal point left
@@ -249,8 +122,8 @@ def main():
     )
     # predict car keypoints
     res = predictor.images([left_image_path, right_image_path])
-    pred_left, _, meta_left = next(res)
-    pred_right, _, meta_right = next(res)
+    pred_left, _, _ = next(res)
+    pred_right, _, _ = next(res)
 
     # compute depth from disparity
     matches = hungarian_centroid_match(pred_left, pred_right)

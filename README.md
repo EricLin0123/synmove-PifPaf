@@ -43,6 +43,7 @@ The structure of the input data should be as follows:
 - `calib.txt`: Calibration file containing camera parameters.
 - `left.png`: Left image.
 - `right.png`: Right image.
+
 The file names are currently hardcoded, so please ensure they match.
 Also, the data folder contains some example data, which can be used for testing. They should be removed from the repository in the future, but for now, they are useful for testing the code.
 
@@ -64,3 +65,13 @@ Also, you can run the hardcoded version:
   bash example.sh
 ```
 
+## Code Structure
+The code is structured as follows:
+```
+    src/
+    ├── main.py          # Main script to run the BEV prediction
+    ├── utils/
+    │   ├── matching.py  # Contains functions for matching vehicle centroids between left and right images
+    │   └── visualize.py # Contains functions for visualizing the results
+    └── openpifpaf/ # The original openpifpaf library
+```
