@@ -125,7 +125,7 @@ def main():
     pred_left, _, _ = next(res)
     pred_right, _, _ = next(res)
 
-    # compute depth from disparity
+    # compute 3D points from matched annotations
     matches = hungarian_centroid_match(pred_left, pred_right)
     points3d = []
     for ann_left, ann_right in matches:
