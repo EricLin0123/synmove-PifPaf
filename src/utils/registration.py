@@ -100,7 +100,7 @@ def unscaled_registration(A: np.ndarray, B: np.ndarray) -> tuple[np.ndarray, np.
 
 def register_car_model(points3d_list:list[list], model_points:np.ndarray, is_scaled:bool=False) -> list[list]:
     '''
-    Register a list of 3D points to a car model using non-coplanar registration.
+    Register a list of 3D points to a car model using point cloud registration.
     '''
     assert len(points3d_list[0]) == len(model_points), "Number of points in 3D list must match model points."
     registered_point_list = []
