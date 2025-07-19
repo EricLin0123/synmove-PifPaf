@@ -63,6 +63,7 @@ def unscaled_registration(A: np.ndarray, B: np.ndarray) -> tuple[np.ndarray, np.
     - B: Target point cloud (dimxN) matched with A by indices.
     Returns:
     - R: Rotation matrix (dimxdim)
+    - S: Identity matrix (dimxdim, identity for unscaled registration)
     - t: Translation vector (dimx1)
     """
     # input checks
