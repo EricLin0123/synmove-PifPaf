@@ -10,6 +10,8 @@ from openpifpaf import decoder, logger, network, show, visualizer, __version__
 from openpifpaf.predictor import Predictor
 from utils.visualize import annotate_image, draw_matches, bev # for all the plots
 from utils.matching import hungarian_centroid_match # for matching vehicles between left and right images
+from utils.registration import register_car_model # for matching keypoints with full car model
+from utils.apollo_skeleton import apollo_skeleton24 # for car keypoints and skeleton
 
 LOG = logging.getLogger(__name__)
 BASELINE = 45 # cm
@@ -77,9 +79,9 @@ def load_projection_matrices(calib_file):
             elif line.startswith('P_rect_03'):
                 P_rect_03 = np.array([float(x) for x in line.split()[1:]]).reshape(3, 4)
     return P_rect_02, P_rect_03
-        
+
 def keypoints3d(ann_left, ann_right, focal_length:tuple, baseline:float, centriod_left:tuple):
-    """Estimate depth from matched objects."""
+    '''Estimate 3D position from matched objects.'''
     keypoints_l = ann_left.data[:, :3]  # shape (K, 3): x, y, conf
     keypoints_r = ann_right.data[:, :3]
 
@@ -101,6 +103,20 @@ def keypoints3d(ann_left, ann_right, focal_length:tuple, baseline:float, centrio
             points_3d.append(None)
     return points_3d
 
+def point3d_to_bev2d(point3d_list):
+    """Convert 3D points to 2D BEV points."""
+    bev2d_list = []
+    for pts in point3d_list:
+        bev_pts = []
+        for pt in pts:
+            if pt is not None:
+                x, _, z = pt
+                bev_pts.append((x, z))
+            else:
+                bev_pts.append(None)
+        bev2d_list.append(bev_pts)
+    return bev2d_list
+
 def main():
     # parse command line arguments
     args = cli()
@@ -120,6 +136,7 @@ def main():
         visualize_image=False,
         visualize_processed_image=args.debug,
     )
+
     # predict car keypoints
     res = predictor.images([left_image_path, right_image_path])
     pred_left, _, _ = next(res)
@@ -127,10 +144,16 @@ def main():
 
     # compute 3D points from matched annotations
     matches = hungarian_centroid_match(pred_left, pred_right)
-    points3d = []
+    point3d_list = []
     for ann_left, ann_right in matches:
         p3d = keypoints3d(ann_left, ann_right, (fx, fy), BASELINE, c_left)
-        points3d.append(p3d)
+        point3d_list.append(p3d)
+    bev2d_list = point3d_to_bev2d(point3d_list)
+
+    # match general car model to keypoints
+    _, model_points, _ = apollo_skeleton24()
+    model_points2d = np.array(model_points)[:, :2]  # only x, z for 2D
+    registered2d_list = register_car_model(bev2d_list, model_points2d, is_scaled=False)
 
     # annotate results
     image_left = cv2.imread(left_image_path)
@@ -143,7 +166,8 @@ def main():
     cv2.imwrite(os.path.join(args.output, 'annotation.png'), combined_image)
 
     # plot bird's eye view
-    bev(points3d, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev.png'))
+    bev(bev2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev.png'))
+    bev(registered2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev_registered.png'))
 
 
 if __name__ == '__main__':
