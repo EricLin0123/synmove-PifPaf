@@ -72,6 +72,8 @@ The code is structured as follows:
     ├── main.py          # Main script to run the BEV prediction
     ├── utils/
     │   ├── matching.py  # Contains functions for matching vehicle centroids between left and right images
-    │   └── visualize.py # Contains functions for visualizing the results
+    │   ├── visualize.py # Contains functions for visualizing the results
+    │   ├── registration.py # Contains functions for car model and point cloud registration
+    │   └── apollo_skeleton.py # Contains functions to get the 24 points Apollo car model skeleton
     └── openpifpaf/ # The original openpifpaf library
 ```
