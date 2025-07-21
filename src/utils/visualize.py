@@ -76,3 +76,41 @@ def bev(bev2d_list, skeleton, save_path='bev.png', figsize=(8, 8), point_size=4,
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
     print(f"Saved BEV image to {save_path}")
+
+def full_bev(bev2d_list, skeleton, ll_2d_list, save_path='full-bev.png', figsize=(8, 8), point_size=4, scale=1800):
+    """Generate a bird's eye view from 3D points."""
+    _, ax = plt.subplots(figsize=figsize)
+    cmap = plt.colormaps['jet'].resampled(len(skeleton))
+
+    # TODO: plot lane line
+    for pt in ll_2d_list:
+        x, z = pt
+        ax.scatter(x, z, s=point_size, c='orange', zorder=3)
+
+    for points in bev2d_list:
+        # Draw skeleton
+        for idx, (i, j) in enumerate(skeleton):
+            if i < len(points) and j < len(points):
+                pi = points[i]
+                pj = points[j]
+                if pi is not None and pj is not None:
+                    xi, zi = pi[0], pi[1]
+                    xj, zj = pj[0], pj[1]
+                    ax.plot([xi, xj], [zi, zj], color=cmap(idx), linewidth=2)
+        # Draw keypoints
+        for pt in points:
+            if pt is not None:
+                x, z = pt
+                ax.scatter(x, z, s=point_size, c='black', zorder=3)
+
+    ax.set_xlabel("X (cm)")
+    ax.set_ylabel("Z (cm)")
+    ax.set_title("Bird's Eye View")
+    ax.grid(True)
+    ax.set_xlim(-scale/2, scale/2)
+    ax.set_ylim(0, scale)
+
+    # os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, bbox_inches='tight')
+    plt.close()
+    print(f"Saved BEV image to {save_path}")

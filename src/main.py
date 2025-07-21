@@ -8,10 +8,12 @@ import cv2
 import numpy as np
 from openpifpaf import decoder, logger, network, show, visualizer, __version__
 from openpifpaf.predictor import Predictor
-from utils.visualize import annotate_image, draw_matches, bev # for all the plots
+from utils.visualize import annotate_image, draw_matches, bev, full_bev # for all the plots
 from utils.matching import hungarian_centroid_match # for matching vehicles between left and right images
 from utils.registration import register_car_model # for matching keypoints with full car model
 from utils.apollo_skeleton import apollo_skeleton24 # for car keypoints and skeleton
+
+from laneline import get_ll_points3d
 
 LOG = logging.getLogger(__name__)
 BASELINE = 45 # cm
@@ -126,7 +128,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     # load projection matrices
-    P_left, _ = load_projection_matrices(calib_file_path)
+    P_left, P_right = load_projection_matrices(calib_file_path)
     fx = P_left[0, 0]  # focal length
     fy = P_left[1, 1]  # focal length
     c_left = [P_left[0, 2], P_left[1, 2]]  # principal point left
@@ -168,6 +170,16 @@ def main():
     # plot bird's eye view
     bev(bev2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev.png'))
     bev(registered2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev_registered.png'))
+
+    # ==== Adding Lane Line ==== #
+    ll_points3d = get_ll_points3d(left_image_path, right_image_path, P_left, P_right, fx, BASELINE, c_left)
+    ll_bev2d = []
+    for pt in ll_points3d:
+        x, _, z = pt
+        ll_bev2d.append((x, z))
+
+    full_bev(bev2d_list, pred_left[0].skeleton_m1, ll_bev2d, save_path=os.path.join(args.output, 'full-bev.png'))
+    full_bev(registered2d_list, pred_left[0].skeleton_m1, ll_bev2d, save_path=os.path.join(args.output, 'full-bev_registered.png'))
 
 
 if __name__ == '__main__':
