@@ -16,8 +16,7 @@ def parse_args():
     args['conf_thres'] = 0.3
     args['iou_thres'] = 0.45
     args['device'] = "0"
-    args['num_samples'] = 100
-    args['output'] = "./output"
+    args['num_samples'] = 300
     return args
 
 def get_mask(img_path, model, args, device, half):
@@ -89,13 +88,14 @@ def compute_depth_sgbm(left_img, right_img, f, B, c, output_path):
 
     log_depth = np.log(depth_map + 1)
     log_depth = (log_depth / np.nanmax(log_depth) * 255).astype(np.uint8)
-    cv2.imwrite(os.path.join(output_path, "depth_map_log.png"), log_depth)
+    cv2.imwrite(os.path.join(output_path, "log_depth_map.png"), log_depth)
 
     return depth_map, disparity
 
-def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c):
+def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c, output_path):
     args = parse_args()
-    os.makedirs(args['output'], exist_ok=True)
+    os.makedirs(output_path, exist_ok=True)
+    os.makedirs(os.path.join(output_path, "laneline"), exist_ok=True)
 
     # Model setup
     device = select_device(args['device'])
@@ -109,7 +109,6 @@ def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c):
         _, left_ll_masks = get_mask(left_path, model, args, device, half)
         _, right_ll_masks = get_mask(right_path, model, args, device, half)
 
-    start_time = time.time()
     left_ll_mask, right_ll_mask = left_ll_masks[0], right_ll_masks[0]
     left_img = cv2.imread(left_path, cv2.IMREAD_COLOR)
     right_img = cv2.imread(right_path, cv2.IMREAD_COLOR)
@@ -118,8 +117,8 @@ def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c):
     left_ll_mask = cv2.resize(left_ll_mask.astype(np.uint8), (left_img.shape[1], left_img.shape[0]), interpolation=cv2.INTER_NEAREST)
     right_ll_mask = cv2.resize(right_ll_mask.astype(np.uint8), (right_img.shape[1], right_img.shape[0]), interpolation=cv2.INTER_NEAREST)
 
-    cv2.imwrite(os.path.join(args['output'], "left_lane_mask.png"), (left_ll_mask * 255).astype(np.uint8))
-    cv2.imwrite(os.path.join(args['output'], "right_lane_mask.png"), (right_ll_mask * 255).astype(np.uint8))
+    cv2.imwrite(os.path.join(output_path, "laneline", "left_lane_mask.png"), (left_ll_mask * 255).astype(np.uint8))
+    cv2.imwrite(os.path.join(output_path, "laneline", "right_lane_mask.png"), (right_ll_mask * 255).astype(np.uint8))
 
     # Skeleton sampling
     left_pts = sample_skeleton_points(left_ll_mask, args['num_samples'])
@@ -128,10 +127,10 @@ def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c):
     for x, y in left_pts.astype(int):
         if 0 <= x < left_skel_img.shape[1] and 0 <= y < left_skel_img.shape[0]:
             cv2.circle(left_skel_img, (x, y), 2, (0, 255, 255), -1)
-    cv2.imwrite(os.path.join(args['output'], "left_skeleton.png"), left_skel_img)
+    cv2.imwrite(os.path.join(output_path, "laneline", "left_skeleton.png"), left_skel_img)
 
     # Compute disparity and depth map
-    depth_map, disparity_map = compute_depth_sgbm(left_img, right_img, f, B, c, args['output'])
+    depth_map, disparity_map = compute_depth_sgbm(left_img, right_img, f, B, c, os.path.join(output_path, "laneline"))
 
     # Project lane line points to 3D
     valid_pts = []
@@ -149,12 +148,10 @@ def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c):
     pts_3d = np.array(pts_3d)
     valid_pts = np.array(valid_pts)
 
-    print(f"Used time: {time.time() - start_time}")
-
     # Annotate
     for (x, y), z in zip(valid_pts, pts_3d[:, 2]):
         cv2.putText(left_img, f"{(z/100):.2f}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
         cv2.circle(left_img, (x, y), 3, (0, 255, 0), -1)
-    cv2.imwrite(os.path.join(args['output'], "left_depth.png"), left_img)
+    cv2.imwrite(os.path.join(output_path, "laneline", "left_depth.png"), left_img)
 
     return pts_3d

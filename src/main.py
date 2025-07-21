@@ -172,7 +172,7 @@ def main():
     bev(registered2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev_registered.png'))
 
     # ==== Adding Lane Line ==== #
-    ll_points3d = get_ll_points3d(left_image_path, right_image_path, P_left, P_right, fx, BASELINE, c_left)
+    ll_points3d = get_ll_points3d(left_image_path, right_image_path, P_left, P_right, fx, BASELINE, c_left, args.output)
     ll_bev2d = []
     for pt in ll_points3d:
         x, _, z = pt
