@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from skimage.morphology import skeletonize
 from sklearn.cluster import DBSCAN
+from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 
 from utils.yolopv2 import (
@@ -199,6 +200,57 @@ def group_ll(pts_2d, output_path, eps=150, min_samples=20, z_max=3000, z_weight=
     plt.grid(True)
     plt.tight_layout()
     save_path = os.path.join(output_path, 'laneline', 'group-ll.png')
+    plt.savefig(save_path)
+    plt.close()
+
+    return clusters
+
+def group_ll_kmeans(pts_2d, output_path, n_clusters=4, z_max=3000, z_weight=0.2, use_z=False):
+    if len(pts_2d) == 0:
+        return {}
+
+    pts_2d = np.array(pts_2d)
+
+    # Filter out points with z > z_max
+    mask = pts_2d[:, 1] <= z_max
+    pts_2d = pts_2d[mask]
+
+    x = pts_2d[:, 0]
+    z = pts_2d[:, 1]
+
+    # Feature engineering
+    if use_z:
+        features = np.stack([x, z * z_weight], axis=1)
+    else:
+        features = x.reshape(-1, 1)
+
+    # KMeans clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init='auto')
+    labels = kmeans.fit_predict(features)
+
+    # Organize clusters
+    clusters = {}
+    for label in np.unique(labels):
+        clusters[label] = pts_2d[labels == label]
+
+    # Visualization
+    plt.figure(figsize=(10, 6))
+    colors = plt.cm.get_cmap('tab10', n_clusters)
+
+    for i, (cluster_id, points) in enumerate(clusters.items()):
+        x, z = points[:, 0], points[:, 1]
+        plt.scatter(x, z, s=10, color=colors(i), label=f"Lane {cluster_id}")
+
+    plt.xlabel("X (cm, left/right)")
+    plt.ylabel("Z (cm, forward)")
+    plt.title("Lane Line Clustering with KMeans (x-z view)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    # Save image
+    save_path = os.path.join(output_path, 'laneline', 'group-ll_kmeans.png')
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path)
     plt.close()
 
