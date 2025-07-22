@@ -4,6 +4,8 @@ import cv2
 import torch
 import numpy as np
 from skimage.morphology import skeletonize
+from sklearn.cluster import DBSCAN
+import matplotlib.pyplot as plt
 
 from utils.yolopv2 import (
     select_device, driving_area_mask, lane_line_mask, LoadImages
@@ -155,3 +157,49 @@ def get_ll_points3d(left_path, right_path, P_left, P_right, f, B, c, output_path
     cv2.imwrite(os.path.join(output_path, "laneline", "left_depth.png"), left_img)
 
     return pts_3d
+
+def group_ll(pts_2d, output_path, eps=150, min_samples=20, z_max=3000, z_weight=0.2, use_z=True):
+    if len(pts_2d) == 0:
+        return {}
+
+    pts_2d = np.array(pts_2d)
+
+    mask = pts_2d[:, 1] <= z_max
+    pts_2d = pts_2d[mask]
+
+    x = pts_2d[:, 0]
+    z = pts_2d[:, 1]
+
+    if use_z:
+        features = np.stack([x, z * z_weight], axis=1)
+    else:
+        features = x.reshape(-1, 1)
+
+    db = DBSCAN(eps=eps, min_samples=min_samples)
+    labels = db.fit_predict(features)
+
+    clusters = {}
+    for label in np.unique(labels):
+        clusters[label] = pts_2d[labels == label]
+
+    # Visualize clustered lane points in (x, z) space.
+    plt.figure(figsize=(10, 6))
+
+    colors = plt.cm.get_cmap('tab10', len(clusters))
+
+    for i, (cluster_id, points) in enumerate(clusters.items()):
+        x, z = points[:, 0], points[:, 1]
+        plt.scatter(x, z, s=10, color=colors(i), label=f"Lane {cluster_id}")
+
+    plt.xlabel("X (cm, left/right)")
+    plt.ylabel("Z (cm, forward)")
+    plt.title("Lane Line Clustering (x-z view)")
+    plt.gca()
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    save_path = os.path.join(output_path, 'laneline', 'group-ll.png')
+    plt.savefig(save_path)
+    plt.close()
+
+    return clusters

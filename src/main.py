@@ -13,7 +13,7 @@ from utils.matching import hungarian_centroid_match # for matching vehicles betw
 from utils.registration import register_car_model # for matching keypoints with full car model
 from utils.apollo_skeleton import apollo_skeleton24 # for car keypoints and skeleton
 
-from laneline import get_ll_points3d
+from laneline import get_ll_points3d, group_ll
 
 LOG = logging.getLogger(__name__)
 BASELINE = 45 # cm
@@ -177,6 +177,10 @@ def main():
     for pt in ll_points3d:
         x, _, z = pt
         ll_bev2d.append((x, z))
+
+    clusters = group_ll(ll_bev2d, args.output)
+    for cid, lane_pts in clusters.items():
+        print(f"Lane {cid}: {len(lane_pts)} points")
 
     full_bev(bev2d_list, pred_left[0].skeleton_m1, ll_bev2d, save_path=os.path.join(args.output, 'full-bev.png'))
     full_bev(registered2d_list, pred_left[0].skeleton_m1, ll_bev2d, save_path=os.path.join(args.output, 'full-bev_registered.png'))
