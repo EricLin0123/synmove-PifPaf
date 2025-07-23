@@ -1,20 +1,38 @@
-"""Predict poses for given images."""
-import argparse
-import glob
-import logging
+""" Construct BEV for given stereo image pair. """
 import os
-import torch
 import cv2
+import glob
+import torch
+import logging
+import argparse
 import numpy as np
+
+# openpifpaf
 from openpifpaf import decoder, logger, network, show, visualizer, __version__
 from openpifpaf.predictor import Predictor
-from utils.visualize import annotate_image, draw_matches, bev # for all the plots
-from utils.matching import hungarian_centroid_match # for matching vehicles between left and right images
-from utils.registration import register_car_model # for matching keypoints with full car model
-from utils.apollo_skeleton import apollo_skeleton24 # for car keypoints and skeleton
+
+## utils
+# general utils
+from utils.common import load_projection_matrices
+from utils.visualize import (
+    bev, car_annotate, car_draw_matches, ll_draw_skeleton_points,
+    ll_disparity_map, ll_log_depth_map, ll_annotate
+)                                                                     # for all visualizations
+
+# car model
+from utils.car.matching import hungarian_centroid_match               # for matching vehicles between left and right images
+from utils.car.keypoint import car_keypoints3d, car_point3d_to_bev2d  # for estimating 3D points and converting to BEV
+from utils.car.registration import register_car_model                 # for matching keypoints with full car model
+from utils.car.apollo_skeleton import apollo_skeleton24               # for car keypoints and skeleton
+
+# lane line
+from utils.lane.yolopv2 import select_device, get_mask                # for YOLOPv2 lane line detection
+from utils.lane.sampling import sample_skeleton_points                # for skeletonized sampling of lane line points
+from utils.lane.keypoint import (
+    compute_depth_sgbm, ll_points3d, ll_point3d_to_bev2d 
+)                                                                     # for computing disparity and converting points to BEV
 
 LOG = logging.getLogger(__name__)
-BASELINE = 45 # cm
 
 def cli():
     parser = argparse.ArgumentParser(
@@ -33,6 +51,7 @@ def cli():
     show.cli(parser)
     visualizer.cli(parser)
 
+    ## I/O parameters
     parser.add_argument('images',
                         help='input images directory', default="data")
     parser.add_argument('--glob',
@@ -41,12 +60,40 @@ def cli():
                         help='output directory')
     parser.add_argument('--disable-cuda', action='store_true',
                         help='disable CUDA')
+    
+    ## camera parameters
+    parser.add_argument('--baseline', type=float, default=45,
+                        help='baseline distance between left and right cameras (in cm)')
+    
+    ## car model registration parameters
     parser.add_argument('--car_scale', type=float, default=30, 
                         help='car model scale')
     parser.add_argument('--ransac_iter', type=int, default=100,
                         help='number of RANSAC iterations for car model registration')
     parser.add_argument('--ransac_threshold', type=float, default=50,
                         help='RANSAC threshold for car model registration')
+
+    ## lane line detection & processing parameters
+    parser.add_argument('--ckpt', type=str, default='checkpoints/yolopv2.pt',
+                        help='path to the YOLOPv2 checkpoint for lane line detection')
+    # YOLOPv2
+    parser.add_argument('--img_size', type=int, default=640,
+                        help='input image size for YOLOPv2')
+    parser.add_argument('--conf_thres', type=float, default=0.3,
+                        help='confidence threshold for YOLOPv2')
+    parser.add_argument('--iou_thres', type=float, default=0.45,
+                        help='IOU threshold for YOLOPv2')
+    # skeletonized sampling
+    parser.add_argument('--num_samples', type=int, default=300,
+                        help='number of samples after skeletonized sampling')
+    # SGBM depth estimation
+    parser.add_argument('--min_disp', type=int, default=0,
+                        help='minimum disparity for SGBM')
+    parser.add_argument('--num_disp', type=int, default=128,
+                        help='number of disparities for SGBM')
+    parser.add_argument('--block_size', type=int, default=5,
+                        help='block size for SGBM')
+
     args = parser.parse_args()
 
     logger.configure(args, LOG)  # logger first
@@ -74,55 +121,6 @@ def cli():
 
     return args
 
-def load_projection_matrices(calib_file):
-    '''Load the projection matrices from the calibration file.'''
-    P_rect_02 = None
-    P_rect_03 = None
-    with open(calib_file, 'r') as f:
-        for line in f:
-            if line.startswith('P_rect_02'):
-                P_rect_02 = np.array([float(x) for x in line.split()[1:]]).reshape(3, 4)
-            elif line.startswith('P_rect_03'):
-                P_rect_03 = np.array([float(x) for x in line.split()[1:]]).reshape(3, 4)
-    return P_rect_02, P_rect_03
-
-def keypoints3d(ann_left, ann_right, focal_length:tuple, baseline:float, centriod_left:tuple):
-    '''Estimate 3D position from matched objects.'''
-    keypoints_l = ann_left.data[:, :3]  # shape (K, 3): x, y, conf
-    keypoints_r = ann_right.data[:, :3]
-
-    keypoints_l = ann_left.data[:, :3]  # x, y, conf
-    keypoints_r = ann_right.data[:, :3]
-
-    points_3d = []
-    for (xl, yl, cl), (xr, _, cr) in zip(keypoints_l, keypoints_r):
-        if cl > 0.1 and cr > 0.1:
-            disparity = xl - xr
-            if disparity != 0:
-                Z = focal_length[0] * baseline / disparity
-                X = (xl - centriod_left[0]) * Z / focal_length[0]
-                Y = (yl - centriod_left[1]) * Z / focal_length[1]
-                points_3d.append((X, Y, Z))
-            else:
-                points_3d.append(None)
-        else:
-            points_3d.append(None)
-    return points_3d
-
-def point3d_to_bev2d(point3d_list):
-    """Convert 3D points to 2D BEV points."""
-    bev2d_list = []
-    for pts in point3d_list:
-        bev_pts = []
-        for pt in pts:
-            if pt is not None:
-                x, _, z = pt
-                bev_pts.append((x, z))
-            else:
-                bev_pts.append(None)
-        bev2d_list.append(bev_pts)
-    return bev2d_list
-
 def main():
     # parse command line arguments
     args = cli()
@@ -130,6 +128,8 @@ def main():
     right_image_path = os.path.join(args.images, 'right.png')
     calib_file_path = os.path.join(args.images, 'calib.txt')
     os.makedirs(args.output, exist_ok=True)
+    os.makedirs(os.path.join(args.output, 'car'), exist_ok=True)
+    os.makedirs(os.path.join(args.output, 'lane'), exist_ok=True)
 
     # load projection matrices
     P_left, _ = load_projection_matrices(calib_file_path)
@@ -137,7 +137,8 @@ def main():
     fy = P_left[1, 1]  # focal length
     c_left = [P_left[0, 2], P_left[1, 2]]  # principal point left
 
-    # setup model pipeline
+    # ========== Car Model Part ========== #
+    # set up pifpaf model pipeline
     predictor = Predictor(
         visualize_image=False,
         visualize_processed_image=args.debug,
@@ -152,9 +153,9 @@ def main():
     matches = hungarian_centroid_match(pred_left, pred_right)
     point3d_list = []
     for ann_left, ann_right in matches:
-        p3d = keypoints3d(ann_left, ann_right, (fx, fy), BASELINE, c_left)
+        p3d = car_keypoints3d(ann_left, ann_right, (fx, fy), args.baseline, c_left)
         point3d_list.append(p3d)
-    bev2d_list = point3d_to_bev2d(point3d_list)
+    bev2d_list = car_point3d_to_bev2d(point3d_list)
 
     # match general car model to keypoints
     _, model_points, _ = apollo_skeleton24(scale=args.car_scale)
@@ -165,16 +166,64 @@ def main():
     # annotate results
     image_left = cv2.imread(left_image_path)
     image_right = cv2.imread(right_image_path)
-    annotate_left = annotate_image(image_left, pred_left)
-    annotate_right = annotate_image(image_right, pred_right)
+    annotate_left = car_annotate(image_left, pred_left)
+    annotate_right = car_annotate(image_right, pred_right)
     # combine the two images
     combined_image = np.hstack((annotate_left, annotate_right))
-    draw_matches(combined_image, matches, image_left.shape, image_right.shape)
-    cv2.imwrite(os.path.join(args.output, 'annotation.png'), combined_image)
+    car_draw_matches(combined_image, matches, image_left.shape, image_right.shape)
+    cv2.imwrite(os.path.join(args.output, 'car', 'annotated_car.png'), combined_image)
+
+    # ========== Lane Line Part ========== #
+    # set up YOLOPv2 model
+    device = select_device(args.device.type)
+    half = device.type != 'cpu'
+    model = torch.jit.load(args.ckpt).to(device)
+    if half:
+        model.half()
+    model.eval()
+
+    with torch.no_grad():
+        _, left_ll_masks = get_mask(left_image_path, model, args, device, half)
+        _, right_ll_masks = get_mask(right_image_path, model, args, device, half)
+
+    left_ll_mask, right_ll_mask = left_ll_masks[0], right_ll_masks[0]
+
+    # resize masks to original image size
+    left_ll_mask = cv2.resize(left_ll_mask.astype(np.uint8), (image_left.shape[1], image_left.shape[0]), interpolation=cv2.INTER_NEAREST)
+    right_ll_mask = cv2.resize(right_ll_mask.astype(np.uint8), (image_right.shape[1], image_right.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    # save lane line masks
+    cv2.imwrite(os.path.join(args.output, "lane", "left_lane_mask.png"), (left_ll_mask * 255).astype(np.uint8))
+    cv2.imwrite(os.path.join(args.output, "lane", "right_lane_mask.png"), (right_ll_mask * 255).astype(np.uint8))
+
+    # skeletonized sampling
+    left_pts = sample_skeleton_points(left_ll_mask, args.num_samples)
+
+    # save skeleton points
+    skel_image = ll_draw_skeleton_points(image_left, left_pts)
+    cv2.imwrite(os.path.join(args.output, "lane", "left_lane_skeleton.png"), skel_image)
+
+    # compute depth map
+    depth_map, disparity_map = compute_depth_sgbm(image_left, image_right, fx, args.baseline)
+
+    # save disparity map & log-scaled depth map
+    ll_disparity_map(disparity_map, save_path=os.path.join(args.output, 'lane', 'disparity_map.png'),
+                     min_disp=args.min_disp, num_disp=args.num_disp)
+    ll_log_depth_map(depth_map, save_path=os.path.join(args.output, 'lane', 'log_depth_map.png'))
+
+    # compute 3D points from lane line points
+    left_pts3d_list, valid_pts = ll_points3d(left_pts, depth_map, fx, c_left)
+
+    # convert 3D points to BEV 2D points
+    ll_bev2d_list = ll_point3d_to_bev2d(left_pts3d_list)
+
+    # annotate results
+    annotated_image = ll_annotate(image_left, left_pts3d_list, valid_pts)
+    cv2.imwrite(os.path.join(args.output, 'lane', 'annotated_lane_line.png'), annotated_image)
 
     # plot bird's eye view
-    bev(bev2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev.png'))
-    bev(registered2d_list, pred_left[0].skeleton_m1, save_path=os.path.join(args.output, 'bev_registered.png'))
+    bev(bev2d_list, pred_left[0].skeleton_m1, ll_bev2d_list, save_path=os.path.join(args.output, 'bev.png'))
+    bev(registered2d_list, pred_left[0].skeleton_m1, ll_bev2d_list, save_path=os.path.join(args.output, 'bev_registered.png'))
 
 
 if __name__ == '__main__':
