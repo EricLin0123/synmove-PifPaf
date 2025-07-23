@@ -41,6 +41,12 @@ def cli():
                         help='output directory')
     parser.add_argument('--disable-cuda', action='store_true',
                         help='disable CUDA')
+    parser.add_argument('--car_scale', type=float, default=30, 
+                        help='car model scale')
+    parser.add_argument('--ransac_iter', type=int, default=100,
+                        help='number of RANSAC iterations for car model registration')
+    parser.add_argument('--ransac_threshold', type=float, default=50,
+                        help='RANSAC threshold for car model registration')
     args = parser.parse_args()
 
     logger.configure(args, LOG)  # logger first
@@ -151,9 +157,10 @@ def main():
     bev2d_list = point3d_to_bev2d(point3d_list)
 
     # match general car model to keypoints
-    _, model_points, _ = apollo_skeleton24()
+    _, model_points, _ = apollo_skeleton24(scale=args.car_scale)
     model_points2d = np.array(model_points)[:, :2]  # only x, z for 2D
-    registered2d_list = register_car_model(bev2d_list, model_points2d, is_scaled=False)
+    registered2d_list = register_car_model(bev2d_list, model_points2d, is_scaled=False, 
+                                           num_iter=args.ransac_iter, threshold=args.ransac_threshold)
 
     # annotate results
     image_left = cv2.imread(left_image_path)

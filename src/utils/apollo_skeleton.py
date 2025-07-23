@@ -1,7 +1,7 @@
 from openpifpaf.plugins.apollocar3d import constants
 import matplotlib.pyplot as plt
 
-def apollo_skeleton24():
+def apollo_skeleton24(scale:float=30):
     """
     Get the keypoints and skeleton for ApolloCar3D with 24 keypoints.
     """
@@ -13,7 +13,7 @@ def apollo_skeleton24():
     keypoints[:, 1], keypoints[:, 2] = -keypoints[:, 2], keypoints[:, 1]
     keypoints[:, 0] *= -1  # Invert X
     # scale keypoints to meters
-    keypoints *= 40
+    keypoints *= scale
     return names, keypoints, skeleton
 
 
