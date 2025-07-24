@@ -31,7 +31,9 @@ from utils.lane.sampling import sample_skeleton_points                # for skel
 from utils.lane.keypoint import (
     compute_depth_sgbm, ll_points3d, ll_point3d_to_bev2d 
 )                                                                     # for computing disparity and converting points to BEV
-from utils.lane.cluster import group_ll_dbscan, group_ll_kmeans       # for clustering lane line points
+from utils.lane.cluster import (
+    group_ll_dbscan, group_ll_kmeans, fit_lane_lines
+)                                                                     # for clustering lane line points
 
 LOG = logging.getLogger(__name__)
 
@@ -65,6 +67,10 @@ def cli():
     ## camera parameters
     parser.add_argument('--baseline', type=float, default=45,
                         help='baseline distance between left and right cameras (in cm)')
+    
+    ## plotting parameters
+    parser.add_argument('--bev_scale', type=float, default=1800,
+                        help='scale for bird\'s eye view plotting')
     
     ## car model registration parameters
     parser.add_argument('--car_scale', type=float, default=30, 
@@ -110,6 +116,14 @@ def cli():
                         help='weight for z value in clustering')
     parser.add_argument('--use_z', action='store_true',
                         help='use z value in clustering (DBSCAN and KMeans)')
+    # curve fitting
+    parser.add_argument('--fit_type', type=str, default='linear',
+                        choices=['linear', 'quadratic'],
+                        help='type of curve fitting for lane lines')
+    parser.add_argument('--line_conf', type=float, default=500,
+                        help='confidence threshold for curve fitting')
+    parser.add_argument('--num_line_points', type=int, default=100,
+                        help='number of points for each lane line curve')
 
     args = parser.parse_args()
 
@@ -245,11 +259,14 @@ def main():
     elif args.clustering_method == 'kmeans':
         ll_clusters = group_ll_kmeans(ll_bev2d_list, n_clusters=args.n_clusters,
                                       z_max=args.z_max, z_weight=args.z_weight, use_z=args.use_z)
+        
+    # fit lane lines
+    fitted_curves = fit_lane_lines(ll_clusters, fit_type=args.fit_type, line_conf=args.line_conf, scale=args.bev_scale,
+                                   num_line_points=args.num_line_points)
 
     # plot bird's eye view
-    bev(bev2d_list, pred_left[0].skeleton_m1, ll_clusters, save_path=os.path.join(args.output, 'bev.png'))
-    bev(registered2d_list, pred_left[0].skeleton_m1, ll_clusters, save_path=os.path.join(args.output, 'bev_registered.png'))
-
+    bev(bev2d_list, pred_left[0].skeleton_m1, fitted_curves, save_path=os.path.join(args.output, 'bev.png'), scale=args.bev_scale)
+    bev(registered2d_list, pred_left[0].skeleton_m1, fitted_curves, save_path=os.path.join(args.output, 'bev_registered.png'), scale=args.bev_scale)
 
 if __name__ == '__main__':
     main()

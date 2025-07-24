@@ -14,3 +14,14 @@ def load_projection_matrices(calib_file):
                 P_rect_03 = np.array([float(x) for x in line.split()[1:]]).reshape(3, 4)
     return P_rect_02, P_rect_03
 
+def linear_line(z, a, b):
+    """
+    Linear function for fitting lane lines.
+    """
+    return a * z + b
+
+def quadratic_line(z, a, b, c):
+    """
+    Quadratic function for fitting lane lines.
+    """
+    return a * z**2 + b * z + c

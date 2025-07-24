@@ -16,8 +16,8 @@ def bev(bev2d_list, skeleton, ll_clusters_dict, save_path='bev.png', figsize=(8,
     for i, (label, points) in enumerate(ll_clusters_dict.items()):
         if len(points) == 0:
             continue
-        x = points[:, 0]
-        z = points[:, 1]
+        x = points[1]
+        z = points[0]
         ax.scatter(x, z, s=point_size, color=ll_cmap(i), label=f'Lane {label}', zorder=2)
     ax.legend(loc='upper right')
 
