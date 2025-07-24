@@ -31,6 +31,7 @@ from utils.lane.sampling import sample_skeleton_points                # for skel
 from utils.lane.keypoint import (
     compute_depth_sgbm, ll_points3d, ll_point3d_to_bev2d 
 )                                                                     # for computing disparity and converting points to BEV
+from utils.lane.cluster import group_ll_dbscan, group_ll_kmeans       # for clustering lane line points
 
 LOG = logging.getLogger(__name__)
 
@@ -93,6 +94,22 @@ def cli():
                         help='number of disparities for SGBM')
     parser.add_argument('--block_size', type=int, default=5,
                         help='block size for SGBM')
+    # clustering
+    parser.add_argument('--clustering_method', type=str, default='dbscan',
+                        choices=['dbscan', 'kmeans'],
+                        help='clustering method for lane line points')
+    parser.add_argument('--eps', type=float, default=100,
+                        help='epsilon for DBSCAN clustering')
+    parser.add_argument('--min_samples', type=int, default=20,
+                        help='minimum samples for DBSCAN clustering')
+    parser.add_argument('--n_clusters', type=int, default=4,
+                        help='number of clusters for KMeans clustering')
+    parser.add_argument('--z_max', type=float, default=3000,
+                        help='maximum z value for filtering points')
+    parser.add_argument('--z_weight', type=float, default=0.2,
+                        help='weight for z value in clustering')
+    parser.add_argument('--use_z', action='store_true',
+                        help='use z value in clustering (DBSCAN and KMeans)')
 
     args = parser.parse_args()
 
@@ -221,9 +238,17 @@ def main():
     annotated_image = ll_annotate(image_left, left_pts3d_list, valid_pts)
     cv2.imwrite(os.path.join(args.output, 'lane', 'annotated_lane_line.png'), annotated_image)
 
+    # clustering lane line points
+    if args.clustering_method == 'dbscan':
+        ll_clusters = group_ll_dbscan(ll_bev2d_list, eps=args.eps, min_samples=args.min_samples,
+                                      z_max=args.z_max, z_weight=args.z_weight, use_z=args.use_z)
+    elif args.clustering_method == 'kmeans':
+        ll_clusters = group_ll_kmeans(ll_bev2d_list, n_clusters=args.n_clusters,
+                                      z_max=args.z_max, z_weight=args.z_weight, use_z=args.use_z)
+
     # plot bird's eye view
-    bev(bev2d_list, pred_left[0].skeleton_m1, ll_bev2d_list, save_path=os.path.join(args.output, 'bev.png'))
-    bev(registered2d_list, pred_left[0].skeleton_m1, ll_bev2d_list, save_path=os.path.join(args.output, 'bev_registered.png'))
+    bev(bev2d_list, pred_left[0].skeleton_m1, ll_clusters, save_path=os.path.join(args.output, 'bev.png'))
+    bev(registered2d_list, pred_left[0].skeleton_m1, ll_clusters, save_path=os.path.join(args.output, 'bev_registered.png'))
 
 
 if __name__ == '__main__':

@@ -4,17 +4,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 from .car.matching import get_centroid
 
-def bev(bev2d_list, skeleton, ll_2d_list, save_path='bev.png', figsize=(8, 8), point_size=4, scale=1800):
+def bev(bev2d_list, skeleton, ll_clusters_dict, save_path='bev.png', figsize=(8, 8), point_size=4, scale=1800):
     """
     Generate a bird's eye view from 3D points.
     """
     _, ax = plt.subplots(figsize=figsize)
-    cmap = plt.colormaps['jet'].resampled(len(skeleton))
+    car_cmap = plt.colormaps['jet'].resampled(len(skeleton))
+    ll_cmap = plt.cm.get_cmap('tab10', len(ll_clusters_dict))
 
-    # plot lane line
-    for pt in ll_2d_list:
-        x, z = pt
-        ax.scatter(x, z, s=point_size, c='orange', zorder=3)
+    # Plot lane line
+    for i, (label, points) in enumerate(ll_clusters_dict.items()):
+        if len(points) == 0:
+            continue
+        x = points[:, 0]
+        z = points[:, 1]
+        ax.scatter(x, z, s=point_size, color=ll_cmap(i), label=f'Lane {label}', zorder=2)
+    ax.legend(loc='upper right')
 
     for points in bev2d_list:
         # Draw skeleton
@@ -25,7 +30,7 @@ def bev(bev2d_list, skeleton, ll_2d_list, save_path='bev.png', figsize=(8, 8), p
                 if pi is not None and pj is not None:
                     xi, zi = pi[0], pi[1]
                     xj, zj = pj[0], pj[1]
-                    ax.plot([xi, xj], [zi, zj], color=cmap(idx), linewidth=2)
+                    ax.plot([xi, xj], [zi, zj], color=car_cmap(idx), linewidth=2)
         # Draw keypoints
         for pt in points:
             if pt is not None:
