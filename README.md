@@ -48,10 +48,10 @@ uv pip install -e .
 The structure of the input data should be as follows:
 
 ```
-    <input_dir>/
-    ├── calib.txt
-    ├── left.png
-    ├── right.png
+<input_dir>/
+  ├── calib.txt
+  ├── left.png
+  ├── right.png
 ```
 
 -   `calib.txt`: Calibration file containing camera parameters.
@@ -78,7 +78,7 @@ python src/main.py <input_dir> \
   --output <output_dir> \
   --checkpoint shufflenetv2k16-apollo-24 \
   --instance-threshold 0.05 --seed-threshold 0.05 \
-  --line-width 4 --font-size 0
+  --line-width 4 --font-size 0 --use_z
 ```
 
 Or simply run:
@@ -101,9 +101,17 @@ The code is structured as follows:
 src/
   ├── main.py  # Main script to run the BEV prediction
   ├── utils/
-  │   ├── matching.py  # Contains functions for matching vehicle centroids between left and right images
-  │   ├── visualize.py  # Contains functions for visualizing the results
-  │   ├── registration.py  # Contains functions for car model and point cloud registration
-  │   └── apollo_skeleton.py  # Contains functions to get the 24 points Apollo car model skeleton
+  |   ├── car/
+  │   |   ├── matching.py  # Contains functions for matching vehicle centroids between left and right images
+  │   |   ├── keypoint.py  # Contains functions processing car keypoints
+  │   |   ├── registration.py  # Contains functions for car model and point cloud registration
+  │   |   └── apollo_skeleton.py  # Contains functions to get the 24 points Apollo car model skeleton
+  |   ├── lane/
+  │   |   ├── yolopv2.py  # Contains functions for YOLOPv2 lane line detection
+  │   |   ├── sampling.py  # Contains functions for sampling lane line points
+  │   |   ├── matching.py  # Contains functions for matching lane line points between left and right images
+  │   |   └── clustering.py  # Contains functions for clustering lane line points
+  |   ├── common.py  # Contains common utility functions
+  |   └── visualize.py  # Contains functions for visualizing the results
   └── openpifpaf/  # The original openpifpaf library
 ```
