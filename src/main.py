@@ -11,7 +11,7 @@ import numpy as np
 from openpifpaf import decoder, logger, network, show, visualizer, __version__
 from openpifpaf.predictor import Predictor
 
-## utils
+# utils
 # general utils
 from utils.common import load_projection_matrices
 from utils.visualize import (
@@ -20,7 +20,8 @@ from utils.visualize import (
 )                                                                     # for all visualizations
 
 # car model
-from utils.car.matching import hungarian_centroid_match               # for matching vehicles between left and right images
+# for matching vehicles between left and right images
+from utils.car.matching import hungarian_centroid_match
 from utils.car.keypoint import car_keypoints3d, car_point3d_to_bev2d  # for estimating 3D points and converting to BEV
 from utils.car.registration import register_car_model                 # for matching keypoints with full car model
 from utils.car.apollo_skeleton import apollo_skeleton24               # for car keypoints and skeleton
@@ -29,13 +30,14 @@ from utils.car.apollo_skeleton import apollo_skeleton24               # for car 
 from utils.lane.yolopv2 import select_device, get_mask                # for YOLOPv2 lane line detection
 from utils.lane.sampling import sample_skeleton_points                # for skeletonized sampling of lane line points
 from utils.lane.keypoint import (
-    compute_depth_sgbm, ll_points3d, ll_point3d_to_bev2d 
+    compute_depth_sgbm, ll_points3d, ll_point3d_to_bev2d
 )                                                                     # for computing disparity and converting points to BEV
 from utils.lane.cluster import (
     group_ll_dbscan, group_ll_kmeans, fit_lane_lines
 )                                                                     # for clustering lane line points
 
 LOG = logging.getLogger(__name__)
+
 
 def cli():
     parser = argparse.ArgumentParser(
@@ -54,7 +56,7 @@ def cli():
     show.cli(parser)
     visualizer.cli(parser)
 
-    ## I/O parameters
+    # I/O parameters
     parser.add_argument('images',
                         help='input images directory', default="data")
     parser.add_argument('--glob',
@@ -63,24 +65,24 @@ def cli():
                         help='output directory')
     parser.add_argument('--disable-cuda', action='store_true',
                         help='disable CUDA')
-    
-    ## camera parameters
+
+    # camera parameters
     parser.add_argument('--baseline', type=float, default=45,
                         help='baseline distance between left and right cameras (in cm)')
-    
-    ## plotting parameters
+
+    # plotting parameters
     parser.add_argument('--bev_scale', type=float, default=1800,
                         help='scale for bird\'s eye view plotting')
-    
-    ## car model registration parameters
-    parser.add_argument('--car_scale', type=float, default=30, 
+
+    # car model registration parameters
+    parser.add_argument('--car_scale', type=float, default=30,
                         help='car model scale')
     parser.add_argument('--ransac_iter', type=int, default=100,
                         help='number of RANSAC iterations for car model registration')
     parser.add_argument('--ransac_threshold', type=float, default=50,
                         help='RANSAC threshold for car model registration')
 
-    ## lane line detection & processing parameters
+    # lane line detection & processing parameters
     parser.add_argument('--ckpt', type=str, default='checkpoints/yolopv2.pt',
                         help='path to the YOLOPv2 checkpoint for lane line detection')
     # YOLOPv2
@@ -152,6 +154,7 @@ def cli():
 
     return args
 
+
 def main():
     # parse command line arguments
     args = cli()
@@ -191,7 +194,7 @@ def main():
     # match general car model to keypoints
     _, model_points, _ = apollo_skeleton24(scale=args.car_scale)
     model_points2d = np.array(model_points)[:, :2]  # only x, z for 2D
-    registered2d_list = register_car_model(bev2d_list, model_points2d, is_scaled=False, 
+    registered2d_list = register_car_model(bev2d_list, model_points2d, is_scaled=False,
                                            num_iter=args.ransac_iter, threshold=args.ransac_threshold)
 
     # annotate results
@@ -220,8 +223,10 @@ def main():
     left_ll_mask, right_ll_mask = left_ll_masks[0], right_ll_masks[0]
 
     # resize masks to original image size
-    left_ll_mask = cv2.resize(left_ll_mask.astype(np.uint8), (image_left.shape[1], image_left.shape[0]), interpolation=cv2.INTER_NEAREST)
-    right_ll_mask = cv2.resize(right_ll_mask.astype(np.uint8), (image_right.shape[1], image_right.shape[0]), interpolation=cv2.INTER_NEAREST)
+    left_ll_mask = cv2.resize(left_ll_mask.astype(
+        np.uint8), (image_left.shape[1], image_left.shape[0]), interpolation=cv2.INTER_NEAREST)
+    right_ll_mask = cv2.resize(right_ll_mask.astype(
+        np.uint8), (image_right.shape[1], image_right.shape[0]), interpolation=cv2.INTER_NEAREST)
 
     # save lane line masks
     cv2.imwrite(os.path.join(args.output, "lane", "left_lane_mask.png"), (left_ll_mask * 255).astype(np.uint8))
@@ -259,14 +264,17 @@ def main():
     elif args.clustering_method == 'kmeans':
         ll_clusters = group_ll_kmeans(ll_bev2d_list, n_clusters=args.n_clusters,
                                       z_max=args.z_max, z_weight=args.z_weight, use_z=args.use_z)
-        
+
     # fit lane lines
     fitted_curves = fit_lane_lines(ll_clusters, fit_type=args.fit_type, line_conf=args.line_conf, scale=args.bev_scale,
                                    num_line_points=args.num_line_points)
 
     # plot bird's eye view
-    bev(bev2d_list, pred_left[0].skeleton_m1, fitted_curves, save_path=os.path.join(args.output, 'bev.png'), scale=args.bev_scale)
-    bev(registered2d_list, pred_left[0].skeleton_m1, fitted_curves, save_path=os.path.join(args.output, 'bev_registered.png'), scale=args.bev_scale)
+    bev(bev2d_list, pred_left[0].skeleton_m1, fitted_curves,
+        save_path=os.path.join(args.output, 'bev.png'), scale=args.bev_scale)
+    bev(registered2d_list, pred_left[0].skeleton_m1, fitted_curves,
+        save_path=os.path.join(args.output, 'bev_registered.png'), scale=args.bev_scale)
+
 
 if __name__ == '__main__':
     main()
