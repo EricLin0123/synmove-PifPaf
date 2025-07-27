@@ -64,3 +64,4 @@ prep.sh
 train.sh
 
 output*/*
+output_stream*/*

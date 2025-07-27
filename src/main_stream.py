@@ -7,6 +7,7 @@ import logging
 import argparse
 import numpy as np
 from tqdm import tqdm
+from collections import defaultdict
 
 # openpifpaf
 from openpifpaf import decoder, logger, network, show, visualizer, __version__
@@ -128,6 +129,12 @@ def cli():
     parser.add_argument('--num_line_points', type=int, default=100,
                         help='number of points for each lane line curve')
 
+    # video generation parameters
+    parser.add_argument('--fps', type=float, default=10.0,
+                        help='frames per second for output videos')
+    parser.add_argument('--video_codec', type=str, default='mp4v',
+                        help='video codec for output videos (mp4v, XVID, etc.)')
+
     args = parser.parse_args()
 
     logger.configure(args, LOG)  # logger first
@@ -174,6 +181,64 @@ def get_image_pairs(data_dir):
     return image_pairs
 
 
+def create_videos_from_images(image_collections, output_dir, fps=10.0, codec='mp4v'):
+    """Create videos from collected images for each output type."""
+    LOG.info("Creating videos from processed images...")
+
+    video_writers = {}
+    video_paths = {}
+
+    try:
+        for output_type, image_paths in image_collections.items():
+            if not image_paths:
+                LOG.warning(f"No images found for {output_type}, skipping video creation")
+                continue
+
+            # Read first image to get dimensions
+            first_img = cv2.imread(image_paths[0])
+            if first_img is None:
+                LOG.warning(f"Could not read first image for {output_type}: {image_paths[0]}")
+                continue
+
+            height, width = first_img.shape[:2]
+
+            # Create video writer
+            video_path = os.path.join(output_dir, f"{output_type}.mp4")
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+
+            if not video_writer.isOpened():
+                LOG.error(f"Failed to create video writer for {output_type}")
+                continue
+
+            video_writers[output_type] = video_writer
+            video_paths[output_type] = video_path
+
+            # Write all frames to video
+            for img_path in tqdm(image_paths, desc=f"Creating {output_type} video"):
+                img = cv2.imread(img_path)
+                if img is not None:
+                    # Resize image if dimensions don't match (safety check)
+                    if img.shape[:2] != (height, width):
+                        img = cv2.resize(img, (width, height))
+                    video_writer.write(img)
+                else:
+                    LOG.warning(f"Could not read image: {img_path}")
+
+            video_writer.release()
+            LOG.info(f"Created video: {video_path}")
+
+    except Exception as e:
+        LOG.error(f"Error creating videos: {str(e)}")
+    finally:
+        # Ensure all video writers are released
+        for writer in video_writers.values():
+            if writer.isOpened():
+                writer.release()
+
+    return video_paths
+
+
 def process_single_pair(left_image_path, right_image_path, frame_name, args, predictor, yolo_model, device, half):
     """Process a single stereo image pair."""
     # Create output directory for this frame
@@ -182,11 +247,14 @@ def process_single_pair(left_image_path, right_image_path, frame_name, args, pre
     os.makedirs(os.path.join(frame_output_dir, 'car'), exist_ok=True)
     os.makedirs(os.path.join(frame_output_dir, 'lane'), exist_ok=True)
 
+    # Store paths to generated images for video creation
+    generated_images = {}
+
     # Load calibration matrices
     calib_file_path = args.calib if args.calib else os.path.join(args.data_dir, 'calib.txt')
     if not os.path.exists(calib_file_path):
         LOG.error(f"Calibration file not found: {calib_file_path}")
-        return False
+        return False, generated_images
 
     P_left, _ = load_projection_matrices(calib_file_path)
     fx = P_left[0, 0]  # focal length
@@ -222,7 +290,9 @@ def process_single_pair(left_image_path, right_image_path, frame_name, args, pre
         # combine the two images
         combined_image = np.hstack((annotate_left, annotate_right))
         car_draw_matches(combined_image, matches, image_left.shape, image_right.shape)
-        cv2.imwrite(os.path.join(frame_output_dir, 'car', 'annotated_car.png'), combined_image)
+        annotated_car_path = os.path.join(frame_output_dir, 'car', 'annotated_car.png')
+        cv2.imwrite(annotated_car_path, combined_image)
+        generated_images['annotated_car'] = annotated_car_path
 
         # ========== Lane Line Part ========== #
         with torch.no_grad():
@@ -238,25 +308,33 @@ def process_single_pair(left_image_path, right_image_path, frame_name, args, pre
             np.uint8), (image_right.shape[1], image_right.shape[0]), interpolation=cv2.INTER_NEAREST)
 
         # save lane line masks
-        cv2.imwrite(os.path.join(frame_output_dir, "lane", "left_lane_mask.png"),
-                    (left_ll_mask * 255).astype(np.uint8))
-        cv2.imwrite(os.path.join(frame_output_dir, "lane", "right_lane_mask.png"),
-                    (right_ll_mask * 255).astype(np.uint8))
+        left_mask_path = os.path.join(frame_output_dir, "lane", "left_lane_mask.png")
+        right_mask_path = os.path.join(frame_output_dir, "lane", "right_lane_mask.png")
+        cv2.imwrite(left_mask_path, (left_ll_mask * 255).astype(np.uint8))
+        cv2.imwrite(right_mask_path, (right_ll_mask * 255).astype(np.uint8))
+        generated_images['left_lane_mask'] = left_mask_path
+        generated_images['right_lane_mask'] = right_mask_path
 
         # skeletonized sampling
         left_pts = sample_skeleton_points(left_ll_mask, args.num_samples)
 
         # save skeleton points
         skel_image = ll_draw_skeleton_points(image_left, left_pts)
-        cv2.imwrite(os.path.join(frame_output_dir, "lane", "left_lane_skeleton.png"), skel_image)
+        skeleton_path = os.path.join(frame_output_dir, "lane", "left_lane_skeleton.png")
+        cv2.imwrite(skeleton_path, skel_image)
+        generated_images['left_lane_skeleton'] = skeleton_path
 
         # compute depth map
         depth_map, disparity_map = compute_depth_sgbm(image_left, image_right, fx, args.baseline)
 
         # save disparity map & log-scaled depth map
-        ll_disparity_map(disparity_map, save_path=os.path.join(frame_output_dir, 'lane', 'disparity_map.png'),
+        disparity_path = os.path.join(frame_output_dir, 'lane', 'disparity_map.png')
+        depth_path = os.path.join(frame_output_dir, 'lane', 'log_depth_map.png')
+        ll_disparity_map(disparity_map, save_path=disparity_path,
                          min_disp=args.min_disp, num_disp=args.num_disp)
-        ll_log_depth_map(depth_map, save_path=os.path.join(frame_output_dir, 'lane', 'log_depth_map.png'))
+        ll_log_depth_map(depth_map, save_path=depth_path)
+        generated_images['disparity_map'] = disparity_path
+        generated_images['log_depth_map'] = depth_path
 
         # compute 3D points from lane line points
         left_pts3d_list, valid_pts = ll_points3d(left_pts, depth_map, fx, c_left)
@@ -266,7 +344,9 @@ def process_single_pair(left_image_path, right_image_path, frame_name, args, pre
 
         # annotate results
         annotated_image = ll_annotate(image_left, left_pts3d_list, valid_pts)
-        cv2.imwrite(os.path.join(frame_output_dir, 'lane', 'annotated_lane_line.png'), annotated_image)
+        annotated_lane_path = os.path.join(frame_output_dir, 'lane', 'annotated_lane_line.png')
+        cv2.imwrite(annotated_lane_path, annotated_image)
+        generated_images['annotated_lane_line'] = annotated_lane_path
 
         # clustering lane line points
         if args.clustering_method == 'dbscan':
@@ -281,23 +361,29 @@ def process_single_pair(left_image_path, right_image_path, frame_name, args, pre
                                        num_line_points=args.num_line_points)
 
         # plot bird's eye view
+        bev_path = os.path.join(frame_output_dir, 'bev.png')
+        bev_registered_path = os.path.join(frame_output_dir, 'bev_registered.png')
+
         if len(pred_left) > 0:
             bev(bev2d_list, pred_left[0].skeleton_m1, fitted_curves,
-                save_path=os.path.join(frame_output_dir, 'bev.png'), scale=args.bev_scale)
+                save_path=bev_path, scale=args.bev_scale)
             bev(registered2d_list, pred_left[0].skeleton_m1, fitted_curves,
-                save_path=os.path.join(frame_output_dir, 'bev_registered.png'), scale=args.bev_scale)
+                save_path=bev_registered_path, scale=args.bev_scale)
         else:
             # Handle case where no detections are found
             bev(bev2d_list, None, fitted_curves,
-                save_path=os.path.join(frame_output_dir, 'bev.png'), scale=args.bev_scale)
+                save_path=bev_path, scale=args.bev_scale)
             bev(registered2d_list, None, fitted_curves,
-                save_path=os.path.join(frame_output_dir, 'bev_registered.png'), scale=args.bev_scale)
+                save_path=bev_registered_path, scale=args.bev_scale)
 
-        return True
+        generated_images['bev'] = bev_path
+        generated_images['bev_registered'] = bev_registered_path
+
+        return True, generated_images
 
     except Exception as e:
         LOG.error(f"Error processing {frame_name}: {str(e)}")
-        return False
+        return False, {}
 
 
 def main():
@@ -342,18 +428,32 @@ def main():
     successful_count = 0
     failed_count = 0
 
+    # Collect image paths for video creation
+    image_collections = defaultdict(list)
+
     for left_path, right_path, frame_name in tqdm(image_pairs, desc="Processing frames"):
         LOG.info(f"Processing frame: {frame_name}")
 
-        success = process_single_pair(left_path, right_path, frame_name, args,
-                                      predictor, yolo_model, device, half)
+        success, generated_images = process_single_pair(left_path, right_path, frame_name, args,
+                                                        predictor, yolo_model, device, half)
 
         if success:
             successful_count += 1
+            # Collect image paths for video creation
+            for output_type, img_path in generated_images.items():
+                image_collections[output_type].append(img_path)
         else:
             failed_count += 1
 
     LOG.info(f"Processing complete. Success: {successful_count}, Failed: {failed_count}")
+
+    # Create videos from collected images
+    if successful_count > 0:
+        video_paths = create_videos_from_images(image_collections, args.output,
+                                                fps=args.fps, codec=args.video_codec)
+        LOG.info(f"Created {len(video_paths)} videos in {args.output}")
+    else:
+        LOG.warning("No successful processing results, skipping video creation")
 
 
 if __name__ == '__main__':
