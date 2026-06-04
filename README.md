@@ -93,6 +93,64 @@ Also, you can run the hardcoded version:
 bash example.sh
 ```
 
+## Results
+
+### Pipeline Overview
+
+A single stereo image pair flows through two parallel branches — PifPaf for vehicles and YOLOPv2 for lane lines & drivable areas — which are then fused into the final Bird's Eye View.
+
+![Pipeline structure diagram](img/structure-diagram.jpg)
+
+### Dataset
+
+Geographic distribution of the data used in this project, spanning real-world captures across multiple countries together with synthetic samples.
+
+![Geographic distribution of data](img/Geo-distribution-of-data.png)
+
+### Pseudo-LiDAR
+
+Stereo depth is back-projected into a dense 3D point cloud, producing a LiDAR-like representation that drives the downstream geometry.
+
+![Pseudo-LiDAR point cloud](img/pseudo-lidar.png)
+
+### Scene 1
+
+Lane lines and drivable area extracted by YOLOPv2:
+
+![Scene 1 lane line detection](img/scene1-lane-line.jpg)
+
+Vehicle keypoint skeletons detected and matched across the left/right stereo pair:
+
+![Scene 1 vehicle skeletons](img/scene1-skeleton.png)
+
+Raw Bird's Eye View, with vehicle keypoints and fitted lane lines projected onto the ground plane:
+
+![Scene 1 raw BEV](img/scene1-bev-raw.jpg)
+
+Reconstructed Bird's Eye View, with full 3D vehicle models registered against the keypoints:
+
+![Scene 1 reconstructed BEV](img/scene1-bev-reconstructed.png)
+
+### Scene 2
+
+Lane lines from YOLOPv2:
+
+![Scene 2 lane line detection](img/scene2-lane-line.png)
+
+Vehicle skeletons matched across the stereo pair:
+
+![Scene 2 vehicle skeletons](img/scene2-skeleton.png)
+
+Final Bird's Eye View combining vehicles and lane lines:
+
+![Scene 2 BEV](img/scene2-bev.png)
+
+### Real-World Demo (Taiwan)
+
+The pipeline applied to a street scene captured in Taiwan, with drivable area, lane boundaries, and detected vehicles.
+
+![Lane line detection in Taiwan](img/lane-line-taiwan.png)
+
 ## Code Structure
 
 The code is structured as follows:
